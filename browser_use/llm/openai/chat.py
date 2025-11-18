@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -269,7 +270,30 @@ class ChatOpenAI(BaseChatModel):
 
 				usage = self._get_usage(response)
 
-				parsed = output_format.model_validate_json(response.choices[0].message.content)
+				# Clean JSON content - Gemini models (via LiteLLM) often return JSON wrapped in markdown code blocks
+				content = response.choices[0].message.content.strip()
+				if self._is_gemini_model() or self.dont_force_structured_output:
+					# Handle JSON wrapped in markdown code blocks (common Gemini behavior)
+					if content.startswith('```json') and content.endswith('```'):
+						content = content[7:-3].strip()
+					elif content.startswith('```') and content.endswith('```'):
+						content = content[3:-3].strip()
+					# Try to extract JSON object if it's not at the start
+					if not content.startswith('{') and '{' in content:
+						start_idx = content.find('{')
+						end_idx = content.rfind('}')
+						if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+							content = content[start_idx : end_idx + 1]
+
+				try:
+					parsed = output_format.model_validate_json(content)
+				except (json.JSONDecodeError, ValueError) as e:
+					# Provide more helpful error message for Gemini models
+					raise ModelProviderError(
+						message=f'Failed to parse structured output from model response: {str(e)}. Content preview: {content[:200]}...',
+						status_code=500,
+						model=self.name,
+					) from e
 
 				return ChatInvokeCompletion(
 					completion=parsed,
