@@ -284,6 +284,58 @@ class ChatOpenAI(BaseChatModel):
 						end_idx = content.rfind('}')
 						if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
 							content = content[start_idx : end_idx + 1]
+					
+					# Try to fix truncated JSON (common Gemini issue with long URLs)
+					# Count braces to find the last valid closing brace, accounting for strings
+					if content.count('{') > content.count('}'):
+						brace_count = 0
+						last_valid_pos = -1
+						in_string = False
+						escape_next = False
+						
+						for i, char in enumerate(content):
+							if escape_next:
+								escape_next = False
+								continue
+							if char == '\\':
+								escape_next = True
+								continue
+							if char == '"' and not escape_next:
+								in_string = not in_string
+								continue
+							if not in_string:
+								if char == '{':
+									brace_count += 1
+								elif char == '}':
+									brace_count -= 1
+									if brace_count == 0:
+										last_valid_pos = i + 1
+										break
+						
+						if last_valid_pos > 0:
+							# Truncate at the last valid position
+							truncated = content[:last_valid_pos]
+							# If we're in the middle of a string, try to close it properly
+							in_string = False
+							escape_next = False
+							for char in truncated:
+								if escape_next:
+									escape_next = False
+									continue
+								if char == '\\':
+									escape_next = True
+									continue
+								if char == '"' and not escape_next:
+									in_string = not in_string
+							
+							if in_string:
+								# Close the open string
+								truncated += '"'
+							# Close any remaining open objects/arrays
+							open_braces = truncated.count('{') - truncated.count('}')
+							open_brackets = truncated.count('[') - truncated.count(']')
+							truncated += '}' * open_braces + ']' * open_brackets
+							content = truncated
 
 				try:
 					parsed = output_format.model_validate_json(content)

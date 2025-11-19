@@ -1258,12 +1258,17 @@ Validated Code (after quote fixing):
 			)
 			async def done(params: StructuredOutputAction):
 				# Exclude success from the output JSON since it's an internal parameter
-				output_dict = params.data.model_dump()
+				# Use mode='json' to apply field serializers (e.g., AnyHttpUrl -> str)
+				output_dict = params.data.model_dump(mode='json')
 
-				# Enums are not serializable, convert to string
+				# Enums are not serializable, convert to string (fallback)
 				for key, value in output_dict.items():
 					if isinstance(value, enum.Enum):
 						output_dict[key] = value.value
+					# Also handle AnyHttpUrl objects that might not be serialized
+					elif hasattr(value, '__str__') and not isinstance(value, (str, int, float, bool, type(None), dict, list)):
+						if 'HttpUrl' in type(value).__name__ or 'Url' in type(value).__name__:
+							output_dict[key] = str(value)
 
 				return ActionResult(
 					is_done=True,

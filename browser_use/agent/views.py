@@ -686,7 +686,24 @@ class AgentHistoryList(BaseModel, Generic[AgentStructuredOutput]):
 			if h.model_output and h.model_output.action:
 				# Use existing model_dump to get action dicts
 				actions_list = [action.model_dump(exclude_none=True) for action in h.model_output.action]
-				action_json = json.dumps(actions_list, indent=1)
+				# Convert AnyHttpUrl and other non-serializable objects to strings
+				def convert_for_json(obj: Any) -> Any:
+					"""Recursively convert non-serializable objects to strings."""
+					if isinstance(obj, dict):
+						return {k: convert_for_json(v) for k, v in obj.items()}
+					elif isinstance(obj, list):
+						return [convert_for_json(item) for item in obj]
+					elif hasattr(obj, '__str__') and not isinstance(obj, (str, int, float, bool, type(None))):
+						# Check if it's an AnyHttpUrl-like object or other non-serializable type
+						type_name = type(obj).__name__
+						if 'HttpUrl' in type_name or 'Url' in type_name or not isinstance(obj, (str, int, float, bool, type(None))):
+							try:
+								json.dumps(obj)  # Test if serializable
+							except (TypeError, ValueError):
+								return str(obj)  # Convert to string if not serializable
+					return obj
+				actions_list = convert_for_json(actions_list)
+				action_json = json.dumps(actions_list, indent=1, default=str)
 				step_text += f'Actions: {action_json}\n'
 
 			# Get results (already a list[ActionResult] in h.result)

@@ -16,13 +16,12 @@ import httpx
 from dotenv import load_dotenv
 from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError
 
-from browser_use import Agent, ChatBrowserUse, ChatOpenAI
-
-# Load environment variables once at import time so API keys are available.
+# Load environment variables before importing browser_use so timeout overrides apply.
 load_dotenv()
-# Ensure longer screenshot/browser-state timeouts unless user already set them
 os.environ.setdefault('TIMEOUT_ScreenshotEvent', '25')
 os.environ.setdefault('TIMEOUT_BrowserStateRequestEvent', '45')
+
+from browser_use import Agent, ChatBrowserUse, ChatOpenAI
 
 
 class ProductResearchInput(BaseModel):

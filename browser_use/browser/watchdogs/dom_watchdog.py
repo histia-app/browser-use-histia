@@ -700,7 +700,13 @@ class DOMWatchdog(BaseWatchdog):
 			return str(screenshot_b64)
 
 		except TimeoutError:
-			self.logger.warning('📸 Clean screenshot timed out after 6 seconds - no handler registered or slow page?')
+			# Access event_timeout safely - it's a class attribute that may not be directly accessible with Pydantic v2
+			timeout_seconds = getattr(ScreenshotEvent, 'event_timeout', None) or 45.0
+			timeout_msg = f'{timeout_seconds:.0f}' if timeout_seconds else 'configured'
+			self.logger.warning(
+				f'📸 Clean screenshot timed out after {timeout_msg} seconds - no handler registered or slow page? '
+				'Set TIMEOUT_ScreenshotEvent to a higher value if this happens frequently.'
+			)
 			raise
 		except Exception as e:
 			self.logger.warning(f'📸 Clean screenshot failed: {type(e).__name__}: {e}')
