@@ -22,6 +22,7 @@ os.environ.setdefault('TIMEOUT_ScreenshotEvent', '25')
 os.environ.setdefault('TIMEOUT_BrowserStateRequestEvent', '45')
 
 from browser_use import Agent, ChatBrowserUse, ChatOpenAI
+from examples.histia import print_llm_usage_summary
 
 
 class ProductResearchInput(BaseModel):
@@ -200,6 +201,7 @@ async def run_product_research(task_input: ProductResearchInput) -> ProductResea
 	)
 
 	history = await agent.run()
+	print_llm_usage_summary(history)
 	if history.structured_output:
 		return _sanitize_report(history.structured_output)  # type: ignore[arg-type]
 

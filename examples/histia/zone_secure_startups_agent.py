@@ -40,6 +40,7 @@ os.environ.setdefault('TIMEOUT_ScrollEvent', '15')
 
 from browser_use import Agent, Browser, ChatBrowserUse, ChatOpenAI, Tools
 from browser_use.browser.events import NavigateToUrlEvent
+from examples.histia import print_llm_usage_summary
 
 
 class ZoneSecureStartupsInput(BaseModel):
@@ -959,6 +960,7 @@ async def run_zone_secure_startups(task_input: ZoneSecureStartupsInput) -> ZoneS
 		print("▶️  Démarrage de l'exécution de l'agent...")
 		history = await agent.run()
 		print("✅ Exécution terminée")
+		print_llm_usage_summary(history)
 		
 		# Try to get structured output
 		if history.structured_output:

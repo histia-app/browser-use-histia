@@ -49,6 +49,7 @@ os.environ.setdefault('TIMEOUT_ScrollEvent', '15')  # Increase scroll timeout fo
 
 from browser_use import Agent, Browser, ChatBrowserUse, ChatOpenAI, Tools
 from browser_use.browser.events import NavigateToUrlEvent
+from examples.histia import print_llm_usage_summary
 
 
 class StationFCompaniesInput(BaseModel):
@@ -864,6 +865,8 @@ async def _accept_cookies_with_llm(browser: Browser, llm) -> bool:
 		browser_session = agent.browser_session
 		
 		history = await agent.run()
+		print_llm_usage_summary(history)
+		print_llm_usage_summary(history)
 		
 		# Check if agent clicked "Accept" button
 		clicked_accept = False
@@ -1492,6 +1495,7 @@ async def run_stationf_companies(task_input: StationFCompaniesInput) -> StationF
 		print("▶️  Démarrage de l'exécution de l'agent (extraction uniquement)...")
 		history = await agent.run()
 		print("✅ Exécution terminée")
+		print_llm_usage_summary(history)
 
 		# Check if agent completed successfully
 		agent_successful = history.is_successful()

@@ -28,6 +28,7 @@ os.environ.setdefault('TIMEOUT_ScreenshotEvent', '30')
 os.environ.setdefault('TIMEOUT_BrowserStateRequestEvent', '60')
 
 from browser_use import Agent, ChatBrowserUse, ChatOpenAI
+from examples.histia import print_llm_usage_summary
 
 
 class StartupListingInput(BaseModel):
@@ -671,6 +672,7 @@ async def run_startup_listing(task_input: StartupListingInput) -> StartupListing
 	print("▶️  Démarrage de l'exécution de l'agent...")
 	history = await agent.run()
 	print("✅ Exécution terminée")
+	print_llm_usage_summary(history)
 	
 	# Check if agent completed successfully
 	agent_successful = history.is_successful()

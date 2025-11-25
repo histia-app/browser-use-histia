@@ -28,6 +28,7 @@ os.environ.setdefault('TIMEOUT_ScrollEvent', '15')
 
 from browser_use import Agent, Browser, ChatBrowserUse, ChatOpenAI
 from browser_use.browser.events import NavigateToUrlEvent
+from examples.histia import print_llm_usage_summary
 
 
 class FutureToolsInput(BaseModel):
@@ -778,9 +779,10 @@ async def run_futuretools_extraction(task_input: FutureToolsInput) -> FutureTool
 		)
 		print("✅ Agent créé")
 
-		print("▶️  Démarrage de l'exécution de l'agent...")
-		history = await agent.run()
-		print("✅ Exécution terminée")
+	print("▶️  Démarrage de l'exécution de l'agent...")
+	history = await agent.run()
+	print("✅ Exécution terminée")
+	print_llm_usage_summary(history)
 
 		# Try to get structured output first
 		if history.structured_output:

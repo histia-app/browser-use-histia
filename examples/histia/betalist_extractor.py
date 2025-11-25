@@ -27,6 +27,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field, ValidationError, field_serial
 
 from browser_use import Agent, Browser, ChatBrowserUse, ChatOpenAI
 from browser_use.browser.events import NavigateToUrlEvent
+from examples.histia import print_llm_usage_summary
 
 try:
 	import httpx  # type: ignore[import-not-found]
@@ -566,6 +567,7 @@ async def run_betalist_extraction(task_input: BetalistInput) -> BetalistReport |
 			directly_open_url=False,
 		)
 		history = await agent.run()
+		print_llm_usage_summary(history)
 
 		if history.structured_output:
 			return history.structured_output  # type: ignore[return-value]

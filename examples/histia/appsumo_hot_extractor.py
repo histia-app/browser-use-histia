@@ -29,6 +29,7 @@ os.environ.setdefault('TIMEOUT_ScrollEvent', '15')
 
 from browser_use import Agent, Browser, ChatBrowserUse, ChatOpenAI
 from browser_use.browser.events import NavigateToUrlEvent
+from examples.histia import print_llm_usage_summary
 
 
 class AppSumoHotInput(BaseModel):
@@ -430,6 +431,7 @@ async def run_appsumo_hot_extraction(task_input: AppSumoHotInput) -> AppSumoHotR
 			directly_open_url=False,
 		)
 		history = await agent.run()
+		print_llm_usage_summary(history)
 
 		if history.structured_output:
 			return history.structured_output  # type: ignore[arg-type]

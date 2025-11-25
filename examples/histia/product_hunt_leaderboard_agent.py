@@ -33,6 +33,7 @@ os.environ.setdefault('TIMEOUT_ScrollEvent', '15')  # Increase scroll timeout fo
 
 from browser_use import Agent, Browser, ChatBrowserUse, ChatOpenAI
 from browser_use.browser.events import NavigateToUrlEvent, ScrollEvent
+from examples.histia import print_llm_usage_summary
 
 
 class ProductHuntLeaderboardInput(BaseModel):
@@ -973,6 +974,7 @@ async def run_product_hunt_leaderboard(task_input: ProductHuntLeaderboardInput) 
 		print("▶️  Démarrage de l'exécution de l'agent (extraction uniquement)...")
 		history = await agent.run()
 		print("✅ Exécution terminée")
+		print_llm_usage_summary(history)
 
 		# Check if agent completed successfully
 		agent_successful = history.is_successful()
