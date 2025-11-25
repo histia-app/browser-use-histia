@@ -779,10 +779,10 @@ async def run_futuretools_extraction(task_input: FutureToolsInput) -> FutureTool
 		)
 		print("✅ Agent créé")
 
-	print("▶️  Démarrage de l'exécution de l'agent...")
-	history = await agent.run()
-	print("✅ Exécution terminée")
-	print_llm_usage_summary(history)
+		print("▶️  Démarrage de l'exécution de l'agent...")
+		history = await agent.run()
+		print("✅ Exécution terminée")
+		print_llm_usage_summary(history)
 
 		# Try to get structured output first
 		if history.structured_output:

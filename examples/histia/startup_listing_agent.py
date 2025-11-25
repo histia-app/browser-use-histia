@@ -474,14 +474,13 @@ def _sanitize_report(report: StartupListingReport) -> StartupListingReport:
 
 
 def build_task(task_input: StartupListingInput) -> str:
-	"""Create the natural-language instructions fed to the agent, specialized for Product Hunt."""
+	"""Create the natural-language instructions fed to the agent, specialized for Product Hunt or generic for other sites."""
 
 	# Determine if we want all startups or a limited number
 	extract_all = task_input.max_startups >= 100
 	is_product_hunt = 'producthunt.com' in str(task_input.url).lower()
 	
 	# Product Hunt specific instructions
-	ph_specific = ""
 	if is_product_hunt:
 		ph_specific = """
 		INSTRUCTIONS SPÉCIFIQUES PRODUCT HUNT:
@@ -513,52 +512,146 @@ def build_task(task_input: StartupListingInput) -> str:
 		- Pattern: Extract (écran 1) -> Scroll -> Wait -> Extract (écran 2) -> Scroll -> Wait -> Extract (écran 3) -> etc.
 		- Continue jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products"
 		"""
+		return dedent(
+			f"""
+			Tu es un agent spécialisé dans l'extraction de listings de produits depuis Product Hunt.
+
+			Objectif CRITIQUE:
+			- Tu dois naviguer vers l'URL fournie: {task_input.url}
+			- {"Identifie et extrait TOUS les produits présents sur cette page Product Hunt, SANS AUCUNE EXCEPTION." if extract_all else f"Identifie et extrait jusqu'à {task_input.max_startups} produits présents sur cette page Product Hunt."}
+			- IMPORTANT: Ne filtre PAS les produits. Prends TOUS les produits visibles sur la page.
+			- Ne confonds PAS les titres de sections (comme "Top Products Launching Today") avec des produits réels.
+			- Pour chaque produit, capture:
+			  • `name`: nom exact du produit tel qu'affiché sur la carte
+			  • `listing_url`: URL complète vers la page Product Hunt du produit (format: https://www.producthunt.com/products/nom-du-produit)
+			  • `linkedin_url`: URL LinkedIn si visible sur la carte (laisse null sinon - généralement pas disponible sur Product Hunt)
+			  • `description`: tagline/description du produit affichée sur la carte
+			  • `short_notes`: tags/catégories visibles (ex: ["Artificial Intelligence", "Productivity"])
+
+			Processus recommandé pour Product Hunt:
+			0. ÉTAPE INITIALE: Naviguer vers l'URL fournie
+			   - Utilise l'action `navigate` avec l'URL: {task_input.url}
+			   - Attends que la page se charge complètement (utilise `wait` avec `seconds: 3`)
+			1. ÉTAPE CRITIQUE: Descendre pour trouver et cliquer sur "See all of today's products"
+			   - Scrolle VERS LE BAS sur la page d'accueil pour trouver le bouton/lien "See all of today's products"
+			   - Le bouton peut être en bas de la section "Top Products Launching Today" visible sur la page d'accueil
+			   - Utilise l'action `scroll` avec `down: true` pour descendre et chercher ce bouton
+			   - Une fois trouvé, utilise l'action `click` pour cliquer sur ce lien/bouton
+			   - Attends que la page se charge complètement après le clic (utilise `wait` avec `seconds: 3`)
+			2. IMPORTANT: Remonter tout en haut après avoir cliqué
+			   - Une fois sur la page "Top Products Launching Today", tu dois être en haut de la liste
+			   - Utilise l'action `scroll` avec `down: false` ou `find_text` pour remonter tout en haut
+			   - Tu peux aussi utiliser `send_keys` avec "Home" pour remonter rapidement en haut de la page
+			   - Assure-toi d'être bien positionné au début de la liste des produits avant de commencer l'extraction
+			3. BOUCLE D'EXTRACTION ITÉRATIVE (Répète jusqu'à avoir {task_input.max_startups} produits OU jusqu'à la fin de la section):
+			   
+			   ⚠️ CRITIQUE: Tu DOIS faire PLUSIEURS extractions successives. Ne fais PAS une seule grande extraction!
+			   
+			   RÉPÈTE cette séquence jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products":
+			   
+			   a. EXTRAIS UNIQUEMENT les produits visibles ACTUELLEMENT à l'écran (pas tous les produits de la page).
+			      - Utilise `extract` avec `extract_links=true`.
+			      - Query: "Extract ONLY the products currently visible on THIS SCREEN (not all products on the page). Capture: name, URL, description, tags. Stop extraction if you see 'Yesterday's Top Products'."
+			      - Cette extraction ne doit capturer QUE les produits visibles maintenant (généralement 5-10 produits par écran).
+			   
+			   b. COMPTE combien de produits tu as collecté au total jusqu'à présent.
+			      - Si tu as déjà {task_input.max_startups} produits ou plus -> passe à l'étape 4.
+			      - Si tu vois "Yesterday's Top Products" -> passe à l'étape 4.
+			   
+			   c. SCROLLE vers le bas pour charger la suite.
+			      - Utilise `scroll` avec `down: true` et `pages: 1`.
+			      - Utilise `wait` avec `seconds: 1` pour laisser le contenu se charger.
+			   
+			   d. RETOURNE à l'étape 'a' pour faire une NOUVELLE extraction des produits maintenant visibles.
+			   
+			   RÈGLE ABSOLUE: 
+			   - Chaque appel à `extract` doit capturer UNIQUEMENT les produits visibles à l'écran au moment de l'appel
+			   - Tu dois faire PLUSIEURS appels à `extract` (un par écran scrollé)
+			   - Ne fais JAMAIS une seule extraction qui essaie de capturer tous les produits d'un coup
+			   - Pattern: Extract (écran 1) -> Scroll -> Extract (écran 2) -> Scroll -> Extract (écran 3) -> etc.
+			   - Continue jusqu'à avoir {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products"
+			   - Même si tu as déjà {task_input.max_startups} produits, poursuis la boucle jusqu'à ce que "Yesterday's Top Products" apparaisse clairement à l'écran
+
+			4. Une fois que tu as atteint la section suivante ("Yesterday's Top Products") ou que tu as collecté {task_input.max_startups} produits:
+			   - Lis TOUTES les extractions que tu as faites précédemment (elles sont disponibles dans ton historique)
+			   - COMBINE toutes les extractions pour créer une liste complète et ordonnée de produits
+			   - Les produits doivent être dans l'ordre où ils apparaissent sur la page (du premier au dernier)
+			   - Limite la liste finale à {task_input.max_startups} produits maximum
+			   - Utilise l'action `done` avec le champ `data` contenant l'objet `StartupListingReport` complet avec TOUS les produits combinés
+			   - IMPORTANT: Le champ `source_url` doit être une CHAÎNE DE CARACTÈRES (string), pas un objet URL
+			   - Format: {{"done": {{"success": true, "data": {{"source_url": "{task_input.url}", "startups": [...]}}}}}}
+
+			Règles importantes:
+			- ÉTAPE CRITIQUE 1: Descendre pour trouver et cliquer sur "See all of today's products" avant d'extraire
+			  • Scrolle VERS LE BAS sur la page d'accueil pour trouver le bouton/lien "See all of today's products"
+			  • Utilise `scroll` avec `down: true` pour descendre et chercher ce bouton
+			  • Une fois trouvé, utilise `click` pour cliquer dessus
+			  • Attends que la page se charge complètement (utilise `wait` avec `seconds: 3`)
+			- ÉTAPE CRITIQUE 2: Remonter tout en haut après avoir cliqué
+			  • Une fois sur la page "Top Products Launching Today", remonte TOUT EN HAUT de la page
+			  • Utilise `scroll` avec `down: false` ou `send_keys` avec "Home" pour remonter rapidement
+			  • Assure-toi d'être bien positionné au début de la liste des produits avant de commencer l'extraction
+			- Reste strictement sur la page "Top Products Launching Today" après avoir cliqué
+			- ⚠️ EXTRACTION ITÉRATIVE OBLIGATOIRE: Tu DOIS faire PLUSIEURS extractions successives (une par écran scrollé)
+			- Chaque extraction doit capturer UNIQUEMENT les produits visibles à l'écran au moment de l'appel
+			- Ne fais JAMAIS une seule extraction qui essaie de capturer tous les produits d'un coup
+			- Pattern obligatoire: Extract (écran 1) -> Scroll -> Wait -> Extract (écran 2) -> Scroll -> Wait -> Extract (écran 3) -> etc.
+			- Continue jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products"
+			- Ne confonds PAS les titres de sections avec des produits réels
+			- N'extrait QUE les produits de "Top Products Launching Today" - ignore "Yesterday's Top Products", "Last Week's Top Products", etc.
+			- Les `short_notes` doivent contenir les tags/catégories visibles sur la carte produit
+			- Si une info manque, laisse le champ null, mais ne l'invente pas
+			- CRITIQUE SÉRIALISATION: Lorsque tu appelles `done`, assure-toi que `source_url` est une chaîne de caractères (string), pas un objet URL
+			- Exemple correct: "source_url": "https://www.producthunt.com/"
+			- Exemple incorrect: "source_url": AnyHttpUrl("https://www.producthunt.com/")
+			- Utilise la vision et sois patient si le chargement est lent
+			- Lorsque tu appelles `done`, combine TOUTES les extractions que tu as faites pour créer la liste complète de {task_input.max_startups} produits
+			{ph_specific}
+			"""
+		).strip()
+	
+	# Generic prompt for non-Product Hunt sites
+	site_url = str(task_input.url)
+	site_name = urlparse(site_url).netloc or "ce site"
 	
 	return dedent(
 		f"""
-		Tu es un agent spécialisé dans l'extraction de listings de produits depuis Product Hunt.
+		Tu es un agent spécialisé dans l'extraction de listings de startups/produits depuis des annuaires en ligne.
 
 		Objectif CRITIQUE:
-		{"- Identifie et extrait TOUS les produits présents sur cette page Product Hunt, SANS AUCUNE EXCEPTION." if extract_all else f"- Identifie et extrait jusqu'à {task_input.max_startups} produits présents sur cette page Product Hunt."}
+		- Tu dois naviguer vers l'URL fournie: {site_url}
+		- {"Identifie et extrait TOUS les produits/startups présents sur cette page, SANS AUCUNE EXCEPTION." if extract_all else f"Identifie et extrait jusqu'à {task_input.max_startups} produits/startups présents sur cette page."}
 		- IMPORTANT: Ne filtre PAS les produits. Prends TOUS les produits visibles sur la page.
-		- Ne confonds PAS les titres de sections (comme "Top Products Launching Today") avec des produits réels.
-		- Pour chaque produit, capture:
-		  • `name`: nom exact du produit tel qu'affiché sur la carte
-		  • `listing_url`: URL complète vers la page Product Hunt du produit (format: https://www.producthunt.com/products/nom-du-produit)
-		  • `linkedin_url`: URL LinkedIn si visible sur la carte (laisse null sinon - généralement pas disponible sur Product Hunt)
-		  • `description`: tagline/description du produit affichée sur la carte
-		  • `short_notes`: tags/catégories visibles (ex: ["Artificial Intelligence", "Productivity"])
+		- Pour chaque produit/startup, capture:
+		  • `name`: nom exact du produit/startup tel qu'affiché sur la page
+		  • `listing_url`: URL complète vers la page du produit/startup (si disponible)
+		  • `linkedin_url`: URL LinkedIn si visible sur la carte (laisse null sinon)
+		  • `description`: description/tagline du produit/startup affichée sur la page
+		  • `short_notes`: tags/catégories visibles ou autres informations pertinentes (ex: ["Artificial Intelligence", "Productivity"])
 
-		Processus recommandé pour Product Hunt:
-		1. ÉTAPE CRITIQUE: Descendre pour trouver et cliquer sur "See all of today's products"
-		   - Scrolle VERS LE BAS sur la page d'accueil pour trouver le bouton/lien "See all of today's products"
-		   - Le bouton peut être en bas de la section "Top Products Launching Today" visible sur la page d'accueil
-		   - Utilise l'action `scroll` avec `down: true` pour descendre et chercher ce bouton
-		   - Une fois trouvé, utilise l'action `click` pour cliquer sur ce lien/bouton
-		   - Attends que la page se charge complètement après le clic (utilise `wait` avec `seconds: 3`)
-		2. IMPORTANT: Remonter tout en haut après avoir cliqué
-		   - Une fois sur la page "Top Products Launching Today", tu dois être en haut de la liste
-		   - Utilise l'action `scroll` avec `down: false` ou `find_text` pour remonter tout en haut
-		   - Tu peux aussi utiliser `send_keys` avec "Home" pour remonter rapidement en haut de la page
-		   - Assure-toi d'être bien positionné au début de la liste des produits avant de commencer l'extraction
-		3. BOUCLE D'EXTRACTION ITÉRATIVE (Répète jusqu'à avoir {task_input.max_startups} produits OU jusqu'à la fin de la section):
+		Processus recommandé:
+		1. NAVIGUE vers l'URL fournie: {site_url}
+		   - Utilise l'action `navigate` avec l'URL: {site_url}
+		   - Attends que la page se charge complètement (utilise `wait` avec `seconds: 3`)
+
+		2. BOUCLE D'EXTRACTION ITÉRATIVE (Répète jusqu'à avoir {task_input.max_startups} produits OU jusqu'à la fin de la liste):
 		   
 		   ⚠️ CRITIQUE: Tu DOIS faire PLUSIEURS extractions successives. Ne fais PAS une seule grande extraction!
 		   
-		   RÉPÈTE cette séquence jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products":
+		   RÉPÈTE cette séquence jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à la fin de la liste:
 		   
-		   a. EXTRAIS UNIQUEMENT les produits visibles ACTUELLEMENT à l'écran (pas tous les produits de la page).
+		   a. EXTRAIS UNIQUEMENT les produits/startups visibles ACTUELLEMENT à l'écran (pas tous les produits de la page).
 		      - Utilise `extract` avec `extract_links=true`.
-		      - Query: "Extract ONLY the products currently visible on THIS SCREEN (not all products on the page). Capture: name, URL, description, tags. Stop extraction if you see 'Yesterday's Top Products'."
-		      - Cette extraction ne doit capturer QUE les produits visibles maintenant (généralement 5-10 produits par écran).
+		      - Query: "Extract ONLY the products/startups currently visible on THIS SCREEN (not all products on the page). For each product/startup, capture: name, URL (if available), description, tags/categories."
+		      - Cette extraction ne doit capturer QUE les produits visibles maintenant (généralement 5-20 produits par écran selon le site).
 		   
 		   b. COMPTE combien de produits tu as collecté au total jusqu'à présent.
-		      - Si tu as déjà {task_input.max_startups} produits ou plus -> passe à l'étape 4.
-		      - Si tu vois "Yesterday's Top Products" -> passe à l'étape 4.
+		      - Si tu as déjà {task_input.max_startups} produits ou plus -> passe à l'étape 3.
+		      - Si tu as atteint la fin de la liste (pas de nouveaux produits après scroll) -> passe à l'étape 3.
 		   
 		   c. SCROLLE vers le bas pour charger la suite.
 		      - Utilise `scroll` avec `down: true` et `pages: 1`.
-		      - Utilise `wait` avec `seconds: 1` pour laisser le contenu se charger.
+		      - Utilise `wait` avec `seconds: 1-2` pour laisser le contenu se charger.
 		   
 		   d. RETOURNE à l'étape 'a' pour faire une NOUVELLE extraction des produits maintenant visibles.
 		   
@@ -566,11 +659,10 @@ def build_task(task_input: StartupListingInput) -> str:
 		   - Chaque appel à `extract` doit capturer UNIQUEMENT les produits visibles à l'écran au moment de l'appel
 		   - Tu dois faire PLUSIEURS appels à `extract` (un par écran scrollé)
 		   - Ne fais JAMAIS une seule extraction qui essaie de capturer tous les produits d'un coup
-		   - Pattern: Extract (écran 1) -> Scroll -> Extract (écran 2) -> Scroll -> Extract (écran 3) -> etc.
-		   - Continue jusqu'à avoir {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products"
-		   - Même si tu as déjà {task_input.max_startups} produits, poursuis la boucle jusqu'à ce que "Yesterday's Top Products" apparaisse clairement à l'écran
+		   - Pattern: Extract (écran 1) -> Scroll -> Wait -> Extract (écran 2) -> Scroll -> Wait -> Extract (écran 3) -> etc.
+		   - Continue jusqu'à avoir {task_input.max_startups} produits OU jusqu'à la fin de la liste
 
-		4. Une fois que tu as atteint la section suivante ("Yesterday's Top Products") ou que tu as collecté {task_input.max_startups} produits:
+		3. Une fois que tu as atteint la fin de la liste ou que tu as collecté {task_input.max_startups} produits:
 		   - Lis TOUTES les extractions que tu as faites précédemment (elles sont disponibles dans ton historique)
 		   - COMBINE toutes les extractions pour créer une liste complète et ordonnée de produits
 		   - Les produits doivent être dans l'ordre où ils apparaissent sur la page (du premier au dernier)
@@ -580,31 +672,19 @@ def build_task(task_input: StartupListingInput) -> str:
 		   - Format: {{"done": {{"success": true, "data": {{"source_url": "{task_input.url}", "startups": [...]}}}}}}
 
 		Règles importantes:
-		- ÉTAPE CRITIQUE 1: Descendre pour trouver et cliquer sur "See all of today's products" avant d'extraire
-		  • Scrolle VERS LE BAS sur la page d'accueil pour trouver le bouton/lien "See all of today's products"
-		  • Utilise `scroll` avec `down: true` pour descendre et chercher ce bouton
-		  • Une fois trouvé, utilise `click` pour cliquer dessus
-		  • Attends que la page se charge complètement (utilise `wait` avec `seconds: 3`)
-		- ÉTAPE CRITIQUE 2: Remonter tout en haut après avoir cliqué
-		  • Une fois sur la page "Top Products Launching Today", remonte TOUT EN HAUT de la page
-		  • Utilise `scroll` avec `down: false` ou `send_keys` avec "Home" pour remonter rapidement
-		  • Assure-toi d'être bien positionné au début de la liste des produits avant de commencer l'extraction
-		- Reste strictement sur la page "Top Products Launching Today" après avoir cliqué
+		- ⚠️ NAVIGUE VERS L'URL FOURNIE: {site_url}
 		- ⚠️ EXTRACTION ITÉRATIVE OBLIGATOIRE: Tu DOIS faire PLUSIEURS extractions successives (une par écran scrollé)
 		- Chaque extraction doit capturer UNIQUEMENT les produits visibles à l'écran au moment de l'appel
 		- Ne fais JAMAIS une seule extraction qui essaie de capturer tous les produits d'un coup
 		- Pattern obligatoire: Extract (écran 1) -> Scroll -> Wait -> Extract (écran 2) -> Scroll -> Wait -> Extract (écran 3) -> etc.
-		- Continue jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à voir "Yesterday's Top Products"
-		- Ne confonds PAS les titres de sections avec des produits réels
-		- N'extrait QUE les produits de "Top Products Launching Today" - ignore "Yesterday's Top Products", "Last Week's Top Products", etc.
-		- Les `short_notes` doivent contenir les tags/catégories visibles sur la carte produit
+		- Continue jusqu'à avoir collecté {task_input.max_startups} produits OU jusqu'à la fin de la liste
+		- Les `short_notes` doivent contenir les tags/catégories visibles ou autres informations pertinentes
 		- Si une info manque, laisse le champ null, mais ne l'invente pas
 		- CRITIQUE SÉRIALISATION: Lorsque tu appelles `done`, assure-toi que `source_url` est une chaîne de caractères (string), pas un objet URL
-		- Exemple correct: "source_url": "https://www.producthunt.com/"
-		- Exemple incorrect: "source_url": AnyHttpUrl("https://www.producthunt.com/")
+		- Exemple correct: "source_url": "{site_url}"
+		- Exemple incorrect: "source_url": AnyHttpUrl("{site_url}")
 		- Utilise la vision et sois patient si le chargement est lent
 		- Lorsque tu appelles `done`, combine TOUTES les extractions que tu as faites pour créer la liste complète de {task_input.max_startups} produits
-		{ph_specific}
 		"""
 	).strip()
 
