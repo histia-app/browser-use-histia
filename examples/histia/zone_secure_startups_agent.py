@@ -903,7 +903,7 @@ async def run_zone_secure_startups(task_input: ZoneSecureStartupsInput) -> ZoneS
 			model=model_name,
 			timeout=httpx.Timeout(180.0, connect=60.0, read=180.0, write=30.0),
 			max_retries=3,
-			max_completion_tokens=90960,
+			max_completion_tokens=15000,
 			add_schema_to_system_prompt=is_gemini,
 			dont_force_structured_output=is_gemini,
 		)
@@ -912,7 +912,7 @@ async def run_zone_secure_startups(task_input: ZoneSecureStartupsInput) -> ZoneS
 			model=extraction_model,
 			timeout=httpx.Timeout(120.0, connect=30.0, read=120.0, write=20.0),
 			max_retries=2,
-			max_completion_tokens=90960,
+			max_completion_tokens=15000,
 			add_schema_to_system_prompt=True,
 			dont_force_structured_output=True,
 		)

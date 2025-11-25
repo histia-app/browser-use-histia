@@ -507,7 +507,7 @@ async def run_betalist_extraction(task_input: BetalistInput) -> BetalistReport |
 			model=model_name,
 			**timeout_kwargs,
 			max_retries=3,
-			max_completion_tokens=90960,
+			max_completion_tokens=15000,
 			add_schema_to_system_prompt='gemini' in model_name.lower(),
 			dont_force_structured_output='gemini' in model_name.lower(),
 		)

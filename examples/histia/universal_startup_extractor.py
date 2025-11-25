@@ -18,7 +18,8 @@ import os
 import re
 from pathlib import Path
 from textwrap import dedent
-from typing import Any
+from typing import Any, Iterable, Sequence
+from urllib.parse import urljoin
 
 import httpx
 from dotenv import load_dotenv
@@ -111,6 +112,180 @@ class Startup(BaseModel):
     )
 
 
+def _clean_str(value: str | None) -> str | None:
+    """Return a stripped string or None if empty."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _parse_tags(value: str | None) -> list[str]:
+    """Parse comma/semicolon separated tags."""
+    cleaned = _clean_str(value)
+    if not cleaned:
+        return []
+    parts = re.split(r'[;,]', cleaned)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _resolve_url(raw_url: str | None, base_url: str) -> str | None:
+    """Convert relative URLs to absolute and normalize blanks."""
+    cleaned = _clean_str(raw_url)
+    if not cleaned:
+        return None
+    return urljoin(base_url, cleaned)
+
+
+def _looks_like_table_line(line: str) -> bool:
+    """Return True when the line appears to be part of a markdown table."""
+    stripped = line.strip()
+    return stripped.startswith('|') and stripped.endswith('|') and stripped.count('|') >= 2
+
+
+def _iter_markdown_tables(text: str) -> Iterable[list[str]]:
+    """Yield markdown table blocks (including header & separator)."""
+    current: list[str] = []
+    for line in text.splitlines():
+        if _looks_like_table_line(line):
+            current.append(line.strip())
+        else:
+            if current:
+                yield current
+                current = []
+    if current:
+        yield current
+
+
+HEADER_ALIAS_MAP: dict[str, tuple[str, ...]] = {
+    'name': ('name', 'startup name', 'company'),
+    'description': ('description', 'tagline', 'summary', 'pitch'),
+    'startup_url': ('url', 'link', 'detail url', 'startup url'),
+    'website': ('website', 'site', 'homepage'),
+    'sector': ('sector', 'category', 'industry', 'domain'),
+    'location': ('location', 'city', 'country', 'region'),
+    'tags': ('tags', 'labels', 'technologies'),
+}
+
+
+def _normalize_header(header: str) -> str | None:
+    """Map a markdown header label to a canonical column name."""
+    cleaned = re.sub(r'[^a-z0-9 ]+', ' ', header.lower()).strip()
+    for canonical, aliases in HEADER_ALIAS_MAP.items():
+        if any(alias in cleaned for alias in aliases):
+            if canonical == 'startup_url' and 'website' in cleaned:
+                continue
+            if canonical == 'website' and 'url' in cleaned and 'website' not in cleaned:
+                continue
+            return canonical
+    return None
+
+
+def _parse_table(table_lines: Sequence[str]) -> tuple[list[str], list[list[str]]] | None:
+    """Convert raw markdown table lines into headers + row values."""
+    if len(table_lines) < 2:
+        return None
+    header = [cell.strip() for cell in table_lines[0].strip('|').split('|')]
+    separator_cells = [cell.strip() for cell in table_lines[1].strip('|').split('|')]
+    if not separator_cells or any(not cell or not set(cell) <= {'-', ':'} for cell in separator_cells):
+        return None
+    rows: list[list[str]] = []
+    for line in table_lines[2:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('>'):
+            continue
+        cells = [cell.strip() for cell in stripped.strip('|').split('|')]
+        if len(cells) != len(header):
+            continue
+        rows.append(cells)
+    if not rows:
+        return None
+    return header, rows
+
+
+def _startups_from_tables(table_lines: Sequence[str], base_url: str) -> list[Startup]:
+    """Convert parsed markdown tables into Startup objects."""
+    parsed = _parse_table(table_lines)
+    if not parsed:
+        return []
+
+    header, rows = parsed
+    mapped_indices: dict[str, int] = {}
+    for idx, label in enumerate(header):
+        normalized = _normalize_header(label)
+        if normalized and normalized not in mapped_indices:
+            mapped_indices[normalized] = idx
+
+    if 'name' not in mapped_indices:
+        return []
+
+    startups: list[Startup] = []
+    for row in rows:
+        name = _clean_str(row[mapped_indices['name']])
+        if not name:
+            continue
+        description = _clean_str(row[mapped_indices['description']]) if 'description' in mapped_indices else None
+        startup_url = (
+            _resolve_url(row[mapped_indices['startup_url']], base_url) if 'startup_url' in mapped_indices else None
+        )
+        website = _resolve_url(row[mapped_indices['website']], base_url) if 'website' in mapped_indices else None
+        sector = _clean_str(row[mapped_indices['sector']]) if 'sector' in mapped_indices else None
+        location = _clean_str(row[mapped_indices['location']]) if 'location' in mapped_indices else None
+        tags = _parse_tags(row[mapped_indices['tags']]) if 'tags' in mapped_indices else []
+
+        startup = Startup(
+            name=name,
+            startup_url=startup_url or website,
+            description=description,
+            website=website if website and website != startup_url else None,
+            sector=sector,
+            location=location,
+            founded_year=None,
+            employees=None,
+            funding_stage=None,
+            logo_url=None,
+            tags=tags,
+            additional_info={},
+        )
+        startups.append(startup)
+    return startups
+
+
+def _deduplicate_startups(startups: Sequence[Startup]) -> list[Startup]:
+    """Remove duplicates while preserving order."""
+    unique: dict[tuple[str, str], Startup] = {}
+    for startup in startups:
+        key = (startup.name.lower(), (startup.startup_url or '').lower())
+        if key not in unique:
+            unique[key] = startup
+    return list(unique.values())
+
+
+def _extract_startups_from_contents(
+    contents: Sequence[str],
+    base_url: str,
+) -> list[Startup]:
+    """Parse markdown tables emitted by the agent into structured startups."""
+    collected: list[Startup] = []
+    for content in contents:
+        for table in _iter_markdown_tables(content):
+            collected.extend(_startups_from_tables(table, base_url))
+    return _deduplicate_startups(collected)
+
+
+def _unique_pages(urls: Sequence[str | None]) -> list[str]:
+    """Return URLs with duplicates removed, preserving order."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for url in urls:
+        if not url:
+            continue
+        if url not in seen:
+            seen.add(url)
+            ordered.append(url)
+    return ordered
+
+
 class StartupExtractionReport(BaseModel):
     """Complete response returned by the agent."""
 
@@ -172,12 +347,14 @@ def build_comprehensive_task(task_input: UniversalStartupExtractorInput) -> str:
         ═══════════════════════════════════════════════════════════════════════════════
 
         CRITICAL RULES:
-        1. Extract ALL startups - DO NOT MISS A SINGLE ONE
-        2. Work on ANY website structure - adapt your strategy intelligently
-        3. Explore ALL pages, sections, tabs, and navigation paths
-        4. Use multiple extraction strategies to ensure completeness
-        5. Stop your exploration and extraction as soon as you have extracted {max_startup} startups (do not extract more than this number, stop exactly at this count and end the extraction rapidly)
-        6. Verify you haven't missed anything from pages explored so far before finishing
+        1. Extract ALL startups visible on listing/gridded pages - DO NOT MISS a card that is currently discoverable via pagination or lazy-loading.
+        2. Stay on the high-level listing views whenever possible. DO NOT open every startup/product detail page just to gather richer information. We are only building a list.
+        3. Required fields per startup: name (exact label on the page), short description/tagline, and the link exposed on the card (category/product link or external website). If website links are not shown on the card, keep the card URL itself. Extra info (tags, scores, etc.) is optional.
+        4. Navigate to additional listing pages ONLY when the current list is exhausted or pagination is clearly required. Avoid deep navigation into profile/detail pages unless the listing card is missing both the description and the link.
+        5. Use multiple extraction strategies (scroll, pagination, section toggles) but keep the footprint minimal—do not re-open pages that already provided enough data.
+        6. Stop exploration immediately once you have extracted {max_startup} startups; do not exceed this number and move to finalization rapidly.
+        7. Before finishing, re-check the current listing page to ensure no visible cards were skipped, but do not traverse past pages that you have already validated.
+        7. Before finishing, re-check the current listing page to ensure no visible cards were skipped, but do not traverse past pages that you have already validated.
 
         ...(rest of task prompt unchanged; you should insert the instruction to stop after max_startup startups where it is relevant in the global rules and summary at the top/Final Report note, as above)...
 
@@ -204,7 +381,7 @@ async def run_universal_startup_extraction(
             model=model_name,
             timeout=httpx.Timeout(180.0, connect=60.0, read=180.0, write=30.0),
             max_retries=3,
-            max_completion_tokens=90960,
+            max_completion_tokens=15000,
             add_schema_to_system_prompt=is_gemini,
             dont_force_structured_output=is_gemini,
         )
@@ -213,7 +390,7 @@ async def run_universal_startup_extraction(
             model=extraction_model,
             timeout=httpx.Timeout(120.0, connect=30.0, read=120.0, write=20.0),
             max_retries=2,
-            max_completion_tokens=90960,
+            max_completion_tokens=15000,
             add_schema_to_system_prompt=True,
             dont_force_structured_output=True,
         )
@@ -224,7 +401,8 @@ async def run_universal_startup_extraction(
     await browser.start()
 
     try:
-        target_url = str(task_input.target_url)
+        source_url_model = task_input.target_url
+        target_url = str(source_url_model)
         print(f"📍 Navigating to: {target_url}")
         navigate_event = NavigateToUrlEvent(url=target_url, new_tab=True)
         await browser.event_bus.dispatch(navigate_event)
@@ -261,34 +439,61 @@ async def run_universal_startup_extraction(
         print("✅ Execution completed")
         print_llm_usage_summary(history)
 
-        # Try to get structured output
-        if history.structured_output:
-            report = history.structured_output  # type: ignore[arg-type]
-            # Truncate startups to max_startup if more were returned
+        parsed_startups = _extract_startups_from_contents(history.extracted_content(), base_url=target_url)
+        pages_visited = _unique_pages(history.urls())
+
+        def _finalize_report(report: StartupExtractionReport, rebuilt_note: bool = False) -> StartupExtractionReport:
+            if parsed_startups and len(parsed_startups) > len(report.startups):
+                report.startups = parsed_startups
+                note = (
+                    "Startup list rebuilt from extraction tables because the agent response was truncated."
+                )
+                if report.extraction_notes:
+                    report.extraction_notes = f'{report.extraction_notes}\n{note}'
+                else:
+                    report.extraction_notes = note
+            if rebuilt_note and parsed_startups and not report.extraction_notes:
+                report.extraction_notes = (
+                    "Startup list built from extraction tables because the agent response did not include structured data."
+                )
+            if not report.pages_visited:
+                report.pages_visited = pages_visited
             if hasattr(task_input, 'max_startup'):
                 report.startups = report.startups[:task_input.max_startup]
             return report
+
+        # Try to get structured output
+        if history.structured_output:
+            report = history.structured_output  # type: ignore[arg-type]
+            return _finalize_report(report)
 
         # Try to extract from final result
         final_result = history.final_result()
         if final_result:
             try:
                 report = StartupExtractionReport.model_validate_json(final_result)
-                if hasattr(task_input, 'max_startup'):
-                    report.startups = report.startups[:task_input.max_startup]
-                return report
+                return _finalize_report(report)
             except ValidationError:
                 match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', final_result, re.DOTALL)
                 if match:
                     try:
                         report = StartupExtractionReport.model_validate_json(match.group(1))
-                        if hasattr(task_input, 'max_startup'):
-                            report.startups = report.startups[:task_input.max_startup]
-                        return report
+                        return _finalize_report(report)
                     except ValidationError:
                         pass
 
-        return _fallback_report(str(task_input.target_url), "Extraction failed: no startups found.")
+        if parsed_startups:
+            return _finalize_report(
+                StartupExtractionReport(
+                    source_url=source_url_model,
+                    startups=parsed_startups,
+                    pages_visited=pages_visited,
+                    extraction_notes=None,
+                ),
+                rebuilt_note=True,
+            )
+
+        return _fallback_report(str(source_url_model), "Extraction failed: no startups found.")
 
     finally:
         # Close browser

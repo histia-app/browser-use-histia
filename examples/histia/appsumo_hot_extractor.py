@@ -352,7 +352,7 @@ async def run_appsumo_hot_extraction(task_input: AppSumoHotInput) -> AppSumoHotR
 			model=model_name,
 			timeout=httpx.Timeout(180.0, connect=60.0, read=180.0, write=30.0),
 			max_retries=3,
-			max_completion_tokens=90960,
+			max_completion_tokens=15000,
 			add_schema_to_system_prompt='gemini' in model_name.lower(),
 			dont_force_structured_output='gemini' in model_name.lower(),
 		)
