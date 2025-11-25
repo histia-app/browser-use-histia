@@ -10,7 +10,7 @@ import time
 import os
 
 load_dotenv()
-
+### Load the environment variable
 
 async def test_simple():
 	"""Test le plus simple possible - juste un appel chat sans schéma."""
